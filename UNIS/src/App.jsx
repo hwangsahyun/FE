@@ -5,6 +5,7 @@ import Budget from './pages/Budget'
 import Savings from './pages/Savings'
 import Report from './pages/Report'
 import MyPage from './pages/MyPage'
+import Character from './pages/Character'
 import BottomNav from './components/BottomNav'
 
 function App() {
@@ -17,6 +18,7 @@ function App() {
         <Route path="/savings" element={<Savings />} />
         <Route path="/report" element={<Report />} />
         <Route path="/mypage" element={<MyPage />} />
+        <Route path="/character" element={<Character />} />
       </Routes>
       <BottomNav />
     </div>
