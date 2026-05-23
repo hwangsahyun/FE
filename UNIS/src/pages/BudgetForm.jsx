@@ -1,48 +1,69 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { defaultCategories } from '../data/dummy'
+import { getCategories } from '../api/category'
+import { createMonthlyBudget } from '../api/budget'
+import { getUserId } from '../utils/helpers'
 
-function BudgetForm({ addBudget, budgetList }) {
+function BudgetForm() {
   const navigate = useNavigate()
   const now = new Date()
 
   const [year, setYear] = useState(now.getFullYear())
   const [month, setMonth] = useState(now.getMonth() + 1)
   const [totalBudget, setTotalBudget] = useState('')
-  const [categoryBudgets, setCategoryBudgets] = useState(
-    Object.fromEntries(defaultCategories.map((cat) => [cat, '']))
-  )
+  const [categories, setCategories] = useState([])
+  const [categoryBudgets, setCategoryBudgets] = useState({})
   const [showPopup, setShowPopup] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  const userId = getUserId()
+
+  useEffect(() => {
+    if (!userId) return
+    getCategories(userId)
+      .then((res) => {
+        const cats = res.data.data.categories
+        setCategories(cats)
+        setCategoryBudgets(
+          Object.fromEntries(cats.map((c) => [c.categoryId, '']))
+        )
+      })
+      .catch(console.error)
+  }, [userId])
 
   const totalAllocated = Object.values(categoryBudgets).reduce(
     (sum, val) => sum + (Number(val) || 0), 0
   )
   const remaining = (Number(totalBudget) || 0) - totalAllocated
-  const isDuplicate = budgetList.some((b) => b.year === year && b.month === month)
+  const isOverBudget = remaining < 0
+  const isDisabled = isOverBudget || !totalBudget || saving
 
-  const handleCategoryChange = (cat, value) => {
-    setCategoryBudgets((prev) => ({ ...prev, [cat]: value }))
-  }
+  const handleSave = async () => {
+    setSaving(true)
+    setError('')
+    const yearMonth = `${year}-${String(month).padStart(2, '0')}`
+    const categoryBudgetList = categories
+      .filter((cat) => Number(categoryBudgets[cat.categoryId]) > 0)
+      .map((cat) => ({
+        categoryId: cat.categoryId,
+        amount: Number(categoryBudgets[cat.categoryId]),
+      }))
 
-  const handleSave = () => {
-    const newCategories = defaultCategories.map((cat) => ({
-      name: cat,
-      budget: Number(categoryBudgets[cat]) || 0,
-      spent: 0,
-    }))
-    addBudget({
-      year,
-      month,
-      total: Number(totalBudget),
-      spent: 0,
-      categories: newCategories,
-    })
-    setShowPopup(true)
-  }
-
-  const handlePopupClose = () => {
-    setShowPopup(false)
-    navigate('/budget')
+    try {
+      await createMonthlyBudget({
+        userId,
+        yearMonth,
+        totalAmount: Number(totalBudget),
+        categoryBudgets: categoryBudgetList,
+      })
+      setShowPopup(true)
+    } catch (err) {
+      const msg = err.response?.data?.message ?? '예산 등록에 실패했어요.'
+      setError(msg)
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -76,9 +97,6 @@ function BudgetForm({ addBudget, budgetList }) {
             ))}
           </select>
         </div>
-        {isDuplicate && (
-          <p className="text-xs text-red-400 mt-2">⚠ 이미 해당 월 예산이 있어요. 저장하면 덮어씌워져요.</p>
-        )}
       </div>
 
       {/* 월 전체 예산 입력 */}
@@ -96,11 +114,11 @@ function BudgetForm({ addBudget, budgetList }) {
         </div>
       </div>
 
-      {/* 남은 예산 표시 */}
-      <div className={`rounded-2xl p-4 mb-4 ${remaining < 0 ? 'bg-red-50' : 'bg-blue-50'}`}>
+      {/* 배분 현황 */}
+      <div className={`rounded-2xl p-4 mb-4 ${isOverBudget ? 'bg-red-50' : 'bg-blue-50'}`}>
         <div className="flex justify-between items-center">
           <p className="text-sm text-gray-400">배분 가능한 예산</p>
-          <p className={`font-bold text-lg ${remaining < 0 ? 'text-red-500' : 'text-blue-500'}`}>
+          <p className={`font-bold text-lg ${isOverBudget ? 'text-red-500' : 'text-blue-500'}`}>
             {remaining.toLocaleString()}원
           </p>
         </div>
@@ -111,7 +129,7 @@ function BudgetForm({ addBudget, budgetList }) {
         {totalBudget && (
           <div className="bg-white/60 rounded-full h-1.5 mt-3">
             <div
-              className={`rounded-full h-1.5 animate-grow ${remaining < 0 ? 'bg-red-400' : 'bg-blue-400'}`}
+              className={`rounded-full h-1.5 animate-grow ${isOverBudget ? 'bg-red-400' : 'bg-blue-400'}`}
               style={{ '--target-width': `${Math.min((totalAllocated / Number(totalBudget)) * 100, 100)}%` }}
             />
           </div>
@@ -119,39 +137,53 @@ function BudgetForm({ addBudget, budgetList }) {
       </div>
 
       {/* 카테고리별 예산 */}
-      <div className="bg-white rounded-2xl p-4 mb-4">
-        <h2 className="font-bold mb-4">카테고리별 예산</h2>
-        <div className="flex flex-col gap-4">
-          {defaultCategories.map((cat) => (
-            <div key={cat} className="flex items-center justify-between gap-4">
-              <span className="text-sm w-20 shrink-0">{cat}</span>
-              <div className="flex items-center gap-1 flex-1">
-                <input
-                  type="number"
-                  value={categoryBudgets[cat]}
-                  onChange={(e) => handleCategoryChange(cat, e.target.value)}
-                  placeholder="0"
-                  className="w-full text-right outline-none text-sm bg-gray-50 rounded-lg px-3 py-2"
-                />
-                <span className="text-sm text-gray-400 shrink-0">원</span>
+      {categories.length > 0 && (
+        <div className="bg-white rounded-2xl p-4 mb-4">
+          <h2 className="font-bold mb-4">카테고리별 예산</h2>
+          <div className="flex flex-col gap-4">
+            {categories.map((cat) => (
+              <div key={cat.categoryId} className="flex items-center justify-between gap-4">
+                <span className="text-sm w-24 shrink-0">
+                  {cat.name}
+                  {cat.isDefault && (
+                    <span className="ml-1 text-[10px] text-gray-300">기본</span>
+                  )}
+                </span>
+                <div className="flex items-center gap-1 flex-1">
+                  <input
+                    type="number"
+                    value={categoryBudgets[cat.categoryId] ?? ''}
+                    onChange={(e) =>
+                      setCategoryBudgets((prev) => ({ ...prev, [cat.categoryId]: e.target.value }))
+                    }
+                    placeholder="0"
+                    className="w-full text-right outline-none text-sm bg-gray-50 rounded-lg px-3 py-2"
+                  />
+                  <span className="text-sm text-gray-400 shrink-0">원</span>
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* 에러 메시지 */}
+      {error && (
+        <p className="text-sm text-red-400 text-center mb-3">{error}</p>
+      )}
 
       {/* 저장 버튼 */}
       <button
         onClick={handleSave}
+        disabled={isDisabled}
         className={`w-full py-4 rounded-2xl font-bold text-white transition-all ${
-          remaining < 0 || !totalBudget ? 'bg-gray-300' : 'bg-blue-500'
+          isDisabled ? 'bg-gray-300' : 'bg-blue-500'
         }`}
-        disabled={remaining < 0 || !totalBudget}
       >
-        저장하기
+        {saving ? '저장 중...' : '저장하기'}
       </button>
 
-      {/* 팝업 */}
+      {/* 완료 팝업 */}
       {showPopup && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl p-6 mx-8 text-center">
@@ -161,7 +193,7 @@ function BudgetForm({ addBudget, budgetList }) {
               이번 달도 계획적으로, 현명하게!<br />응원할게요 💪
             </p>
             <button
-              onClick={handlePopupClose}
+              onClick={() => navigate('/budget')}
               className="w-full bg-blue-500 text-white py-3 rounded-xl font-bold"
             >
               확인

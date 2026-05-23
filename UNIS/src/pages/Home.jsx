@@ -1,14 +1,18 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { dailyExpenses, dailyExpenseDetails } from '../data/dummy'
+import { getHome } from '../api/home'
+import { getExpenses } from '../api/expense'
+import { getUserId, getCurrentYearMonth } from '../utils/helpers'
 
-function Home({ budgetData }) {
-  const remaining = budgetData.total - budgetData.spent
-  const spentPercent = Math.round((budgetData.spent / budgetData.total) * 100)
+function Home() {
+  const navigate = useNavigate()
+  const [homeData, setHomeData] = useState(null)
+  const [dailyExpenses, setDailyExpenses] = useState({})
+  const [dailyExpenseDetails, setDailyExpenseDetails] = useState({})
+  const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('budget')
   const [calendarOpen, setCalendarOpen] = useState(false)
   const [selectedDate, setSelectedDate] = useState(null)
-  const navigate = useNavigate()
 
   const now = new Date()
   const year = now.getFullYear()
@@ -16,11 +20,39 @@ function Home({ budgetData }) {
   const today = now.getDate()
   const weekdays = ['일', '월', '화', '수', '목', '금', '토']
   const todayWeekday = weekdays[now.getDay()]
-
-  const user = { name: "황사현", streak: 5 }
-
   const firstDay = new Date(year, month - 1, 1).getDay()
   const daysInMonth = new Date(year, month, 0).getDate()
+  const yearMonth = getCurrentYearMonth()
+
+  useEffect(() => {
+    const userId = getUserId()
+    if (!userId) return
+
+    Promise.all([
+      getHome(userId, yearMonth).catch(() => null),
+      getExpenses(userId, yearMonth).catch(() => ({ data: { data: { expenses: [] } } })),
+    ]).then(([homeRes, expenseRes]) => {
+      if (homeRes) setHomeData(homeRes.data.data)
+
+      // 소비 내역 → 날짜별 집계
+      const expenses = expenseRes?.data?.data?.expenses ?? []
+      const byDay = {}
+      const byDayDetail = {}
+      expenses.forEach((exp) => {
+        const d = exp.expenseDate
+        byDay[d] = (byDay[d] || 0) + exp.amount
+        if (!byDayDetail[d]) byDayDetail[d] = []
+        byDayDetail[d].push({
+          category: exp.categoryName,
+          description: exp.memo || '-',
+          amount: exp.amount,
+        })
+      })
+      setDailyExpenses(byDay)
+      setDailyExpenseDetails(byDayDetail)
+      setLoading(false)
+    })
+  }, [yearMonth])
 
   const formatDate = (d) => {
     const mm = String(month).padStart(2, '0')
@@ -30,12 +62,28 @@ function Home({ budgetData }) {
 
   const handleDateClick = (day) => {
     const dateKey = formatDate(day)
-    if (selectedDate === dateKey) {
-      setSelectedDate(null)
-    } else {
-      setSelectedDate(dateKey)
-    }
+    setSelectedDate(selectedDate === dateKey ? null : dateKey)
   }
+
+  if (loading) {
+    return (
+      <div className="p-4 pb-24 flex items-center justify-center min-h-[80vh]">
+        <p className="text-gray-400 text-sm">불러오는 중...</p>
+      </div>
+    )
+  }
+
+  const nickname = homeData?.user?.nickname ?? localStorage.getItem('user_nickname') ?? '사용자'
+  const character = homeData?.character
+  const budget = homeData?.budget
+  const categories = homeData?.categories ?? []
+  const recentExpenses = homeData?.recentExpenses ?? []
+  const aiMessage = homeData?.aiMessage
+
+  const hasBudget = !!budget && budget.totalAmount > 0
+  const spentPercent = hasBudget
+    ? Math.min(Math.round((budget.totalSpentAmount / budget.totalAmount) * 100), 100)
+    : 0
 
   return (
     <div className="p-4 pb-24">
@@ -45,12 +93,14 @@ function Home({ budgetData }) {
           <p className="text-gray-400 text-sm">
             {year}년 {month}월 {today}일 ({todayWeekday})
           </p>
-          <h1 className="text-xl font-bold">{user.name}님 안녕하세요 👋</h1>
+          <h1 className="text-xl font-bold">{nickname}님 안녕하세요 👋</h1>
         </div>
-        <div className="text-center bg-blue-50 rounded-xl px-4 py-2">
-          <p className="text-xs text-gray-400">출석</p>
-          <p className="text-blue-500 font-bold">{user.streak}일 🔥</p>
-        </div>
+        {character && (
+          <div className="text-center bg-blue-50 rounded-xl px-4 py-2">
+            <p className="text-xs text-gray-400">코인</p>
+            <p className="text-blue-500 font-bold">{character.coin} 🪙</p>
+          </div>
+        )}
       </div>
 
       {/* 탭 전환 */}
@@ -76,46 +126,71 @@ function Home({ budgetData }) {
       {/* 예산 현황 탭 */}
       {activeTab === 'budget' && (
         <>
-          {/* 예산 카드 */}
-          <div className="bg-blue-500 text-white rounded-2xl p-5 mb-4">
-            <p className="text-sm opacity-80 mb-1">이번 달 예산</p>
-            <p className="text-3xl font-bold mb-4">{budgetData.total.toLocaleString()}원</p>
-            <div className="bg-white/20 rounded-full h-2 mb-2">
-              <div
-                className="bg-white rounded-full h-2 animate-grow"
-                style={{ '--target-width': `${spentPercent}%` }}
-              />
+          {/* 예산 없을 때 */}
+          {!hasBudget ? (
+            <div className="bg-blue-50 rounded-2xl p-5 mb-4 text-center">
+              <p className="text-gray-500 text-sm mb-3">이번 달 예산이 아직 없어요</p>
+              <button
+                onClick={() => navigate('/budget/new')}
+                className="bg-blue-500 text-white px-5 py-2 rounded-xl text-sm font-bold"
+              >
+                예산 설정하기 →
+              </button>
             </div>
-            <div className="flex justify-between text-sm mt-2">
-              <span>지출 {budgetData.spent.toLocaleString()}원</span>
-              <span>남은 금액 {remaining.toLocaleString()}원</span>
-            </div>
-          </div>
+          ) : (
+            <>
+              {/* 예산 카드 */}
+              <div className="bg-blue-500 text-white rounded-2xl p-5 mb-4">
+                <p className="text-sm opacity-80 mb-1">이번 달 예산</p>
+                <p className="text-3xl font-bold mb-4">{budget.totalAmount.toLocaleString()}원</p>
+                <div className="bg-white/20 rounded-full h-2 mb-2">
+                  <div
+                    className="bg-white rounded-full h-2 animate-grow"
+                    style={{ '--target-width': `${spentPercent}%` }}
+                  />
+                </div>
+                <div className="flex justify-between text-sm mt-2">
+                  <span>지출 {budget.totalSpentAmount.toLocaleString()}원</span>
+                  <span>남은 금액 {budget.remainingAmount.toLocaleString()}원</span>
+                </div>
+              </div>
 
-          {/* 카테고리별 지출 */}
-          <div className="bg-white rounded-2xl p-4 mb-4">
-            <h2 className="font-bold mb-3">카테고리별 지출</h2>
-            <div className="flex flex-col gap-3">
-              {budgetData.categories.filter(cat => cat.budget > 0).map((cat) => (
-                <div key={cat.name}>
-                  <div className="flex justify-between text-sm mb-1">
-                    <span>{cat.name}</span>
-                    <span className="text-gray-400">
-                      {cat.spent.toLocaleString()} / {cat.budget.toLocaleString()}원
-                    </span>
-                  </div>
-                  <div className="bg-gray-100 rounded-full h-1.5">
-                    <div
-                      className="bg-blue-400 rounded-full h-1.5 animate-grow"
-                      style={{ '--target-width': `${Math.min(Math.round((cat.spent / cat.budget) * 100), 100)}%` }}
-                    />
+              {/* AI 메시지 */}
+              {aiMessage && (
+                <div className="bg-blue-50 rounded-2xl p-3 mb-4 flex items-center gap-2">
+                  <span className="text-lg">💡</span>
+                  <p className="text-sm text-blue-700">{aiMessage}</p>
+                </div>
+              )}
+
+              {/* 카테고리별 지출 */}
+              {categories.length > 0 && (
+                <div className="bg-white rounded-2xl p-4 mb-4">
+                  <h2 className="font-bold mb-3">카테고리별 지출</h2>
+                  <div className="flex flex-col gap-3">
+                    {categories.map((cat) => (
+                      <div key={cat.categoryId}>
+                        <div className="flex justify-between text-sm mb-1">
+                          <span>{cat.categoryName}</span>
+                          <span className="text-gray-400">
+                            {cat.spentAmount.toLocaleString()} / {cat.budgetAmount.toLocaleString()}원
+                          </span>
+                        </div>
+                        <div className="bg-gray-100 rounded-full h-1.5">
+                          <div
+                            className="bg-blue-400 rounded-full h-1.5 animate-grow"
+                            style={{ '--target-width': `${Math.min(cat.usageRate, 100)}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
-              ))}
-            </div>
-          </div>
+              )}
+            </>
+          )}
 
-          {/* 캘린더 접기/펼치기 */}
+          {/* 캘린더 */}
           <div className="bg-white rounded-2xl p-4 mb-4">
             <button
               onClick={() => {
@@ -130,7 +205,6 @@ function Home({ budgetData }) {
 
             {calendarOpen && (
               <div className="mt-4">
-                {/* 요일 헤더 */}
                 <div className="grid grid-cols-7 mb-2">
                   {weekdays.map((d) => (
                     <p key={d} className={`text-center text-xs font-bold ${
@@ -140,8 +214,6 @@ function Home({ budgetData }) {
                     </p>
                   ))}
                 </div>
-
-                {/* 날짜 그리드 */}
                 <div className="grid grid-cols-7 gap-y-2">
                   {Array.from({ length: firstDay }).map((_, i) => (
                     <div key={`empty-${i}`} />
@@ -152,7 +224,6 @@ function Home({ budgetData }) {
                     const expense = dailyExpenses[dateKey]
                     const isToday = day === today
                     const isSelected = selectedDate === dateKey
-
                     return (
                       <button
                         key={day}
@@ -177,7 +248,6 @@ function Home({ budgetData }) {
                   })}
                 </div>
 
-                {/* 선택한 날짜 내역 */}
                 {selectedDate && (
                   <div className="mt-4 pt-4 border-t border-gray-100">
                     <p className="text-sm font-bold mb-3 text-gray-600">
@@ -222,12 +292,37 @@ function Home({ budgetData }) {
           <div className="w-32 h-32 bg-blue-50 rounded-full flex items-center justify-center mb-4">
             <span className="text-6xl">🐣</span>
           </div>
-          <p className="font-bold text-lg mb-1">소비 새싹</p>
-          <p className="text-gray-400 text-sm mb-4">연속 {user.streak}일 출석 중이에요!</p>
+          <p className="font-bold text-lg mb-1">{character?.name ?? '기본 캐릭터'}</p>
+          <p className="text-gray-400 text-sm mb-4">코인 {character?.coin ?? 0}개 보유 중</p>
           <div className="w-full bg-gray-100 rounded-full h-2">
-            <div className="bg-blue-400 rounded-full h-2 animate-grow" style={{ '--target-width': '40%' }} />
+            <div
+              className="bg-blue-400 rounded-full h-2 animate-grow"
+              style={{ '--target-width': `${character?.feelingXp ?? 0}%` }}
+            />
           </div>
-          <p className="text-xs text-gray-400 mt-2">다음 단계까지 60% 남았어요</p>
+          <p className="text-xs text-gray-400 mt-2">
+            기분 경험치 {character?.feelingXp ?? 0} / 100
+          </p>
+        </div>
+      )}
+
+      {/* 최근 소비 내역 */}
+      {recentExpenses.length > 0 && (
+        <div className="bg-white rounded-2xl p-4 mb-4">
+          <h2 className="font-bold mb-3">최근 소비</h2>
+          <div className="flex flex-col gap-2">
+            {recentExpenses.map((exp) => (
+              <div key={exp.expenseId} className="flex justify-between items-center">
+                <div>
+                  <span className="text-xs bg-blue-50 text-blue-400 rounded-full px-2 py-0.5 mr-2">
+                    {exp.categoryName}
+                  </span>
+                  <span className="text-sm text-gray-600">{exp.memo || '-'}</span>
+                </div>
+                <span className="text-sm font-bold">{exp.amount.toLocaleString()}원</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
