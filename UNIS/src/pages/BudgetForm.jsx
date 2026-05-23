@@ -15,7 +15,10 @@ function BudgetForm() {
   const [categoryBudgets, setCategoryBudgets] = useState({})
   const [showPopup, setShowPopup] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
+
+  // 토스트 (DELTA BudgetSetupScreen과 동일한 구조)
+  const [toast, setToast] = useState(null)
+  const [toastFading, setToastFading] = useState(false)
 
   const userId = getUserId()
 
@@ -35,13 +38,35 @@ function BudgetForm() {
   const totalAllocated = Object.values(categoryBudgets).reduce(
     (sum, val) => sum + (Number(val) || 0), 0
   )
-  const remaining = (Number(totalBudget) || 0) - totalAllocated
+  const totalBudgetNum = Number(totalBudget) || 0
+  const remaining = totalBudgetNum - totalAllocated
   const isOverBudget = remaining < 0
-  const isDisabled = isOverBudget || !totalBudget || saving
+
+  function showToast(message) {
+    setToast(message)
+    setToastFading(false)
+    setTimeout(() => {
+      setToastFading(true)
+      setTimeout(() => setToast(null), 300)
+    }, 1700)
+  }
 
   const handleSave = async () => {
+    // DELTA BudgetSetupScreen의 handleComplete와 동일한 검증 순서
+    if (!totalBudget) {
+      showToast('총 예산을 먼저 입력해주세요!')
+      return
+    }
+    if (totalAllocated > totalBudgetNum) {
+      showToast(`${(totalAllocated - totalBudgetNum).toLocaleString()}원 초과해서 입력되었어요!`)
+      return
+    }
+    if (totalAllocated < totalBudgetNum) {
+      showToast(`${(totalBudgetNum - totalAllocated).toLocaleString()}원이 아직 배분되지 않았어요!`)
+      return
+    }
+
     setSaving(true)
-    setError('')
     const yearMonth = `${year}-${String(month).padStart(2, '0')}`
     const categoryBudgetList = categories
       .filter((cat) => Number(categoryBudgets[cat.categoryId]) > 0)
@@ -54,13 +79,13 @@ function BudgetForm() {
       await createMonthlyBudget({
         userId,
         yearMonth,
-        totalAmount: Number(totalBudget),
+        totalAmount: totalBudgetNum,
         categoryBudgets: categoryBudgetList,
       })
       setShowPopup(true)
     } catch (err) {
       const msg = err.response?.data?.message ?? '예산 등록에 실패했어요.'
-      setError(msg)
+      showToast(msg)
     } finally {
       setSaving(false)
     }
@@ -68,6 +93,25 @@ function BudgetForm() {
 
   return (
     <div className="p-4 pb-24">
+
+      {/* 토스트 (DELTA와 동일한 스타일) */}
+      {toast && (
+        <div
+          className={`fixed z-50 flex items-center rounded-2xl shadow-md ${toastFading ? 'toast-exit' : 'toast-enter'}`}
+          style={{
+            bottom: '96px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            backgroundColor: '#FECACA',
+            border: '1px solid #FECACA',
+            whiteSpace: 'nowrap',
+            padding: '4px 12px',
+          }}
+        >
+          <span className="font-medium text-red-400" style={{ fontSize: '11px' }}>{toast}</span>
+        </div>
+      )}
+
       {/* 헤더 */}
       <div className="flex items-center gap-3 mb-6">
         <button onClick={() => navigate('/budget')} className="text-gray-400 text-lg">←</button>
@@ -130,7 +174,7 @@ function BudgetForm() {
           <div className="bg-white/60 rounded-full h-1.5 mt-3">
             <div
               className={`rounded-full h-1.5 animate-grow ${isOverBudget ? 'bg-red-400' : 'bg-blue-400'}`}
-              style={{ '--target-width': `${Math.min((totalAllocated / Number(totalBudget)) * 100, 100)}%` }}
+              style={{ '--target-width': `${Math.min((totalAllocated / totalBudgetNum) * 100, 100)}%` }}
             />
           </div>
         )}
@@ -167,18 +211,11 @@ function BudgetForm() {
         </div>
       )}
 
-      {/* 에러 메시지 */}
-      {error && (
-        <p className="text-sm text-red-400 text-center mb-3">{error}</p>
-      )}
-
-      {/* 저장 버튼 */}
+      {/* 저장 버튼 — 항상 활성, 검증은 클릭 시 토스트로 처리 */}
       <button
         onClick={handleSave}
-        disabled={isDisabled}
-        className={`w-full py-4 rounded-2xl font-bold text-white transition-all ${
-          isDisabled ? 'bg-gray-300' : 'bg-blue-500'
-        }`}
+        disabled={saving}
+        className="w-full py-4 rounded-2xl font-bold text-white bg-blue-500 transition-all disabled:opacity-60"
       >
         {saving ? '저장 중...' : '저장하기'}
       </button>
