@@ -2,7 +2,6 @@ import axios from 'axios';
 
 const api = axios.create({
   baseURL: `${import.meta.env.VITE_API_BASE_URL}/api/v1`,
-  withCredentials: true,
 });
 
 // 요청 인터셉터 — 헤더에 uuid 자동 주입
